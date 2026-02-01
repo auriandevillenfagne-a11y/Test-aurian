@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Stats chasse – par chasseur</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: sans-serif; margin: 16px; max-width: 600px; }
+    h1 { font-sizeVoici la version mise à jour de ton appli chasse, avec gestion du nombre de battues prévues au début de la journée, ajout dynamique des chasseurs (nom + stats par battue), et stats détaillées par battue, par chasseur, et totaux. Les données restent sauvegardées localement.[web:16][web:32][web:34]
+
+## 1. Nouvelles fonctionnalités ajoutées
+
+- Au début de la journée : préciser nombre de battues prévues (pour pré-remplir).
+- Ajouter/supprimer chasseurs dynamiquement.
+- Pour chaque battue : saisir stats **par chasseur** (cartouches + oiseaux).
+- Stats automatiques : réussite par battue/chasseur, moyennes cartouches par battue, totaux généraux.[web:34]
+
+## 2. Code complet mis à jour
+
+Remplace le contenu de `chasse.html` par ceci (compatible avec l’ancien, tes données migrent automatiquement) :
+
+```html
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Stats de tir chasse – Avancée</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: sans-serif; margin: 16px; max-width: 100%; }
+    h1 { font-size: 20px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    h3 { font-size: 16px; margin-top: 16px; }
+    label { display: block; margin-top: 8px; }
+    input, select, button { font-size: 16px; padding: 4px 8px; margin: 4px 0; width: 100%; box-sizing: border-box; }
+    button { background: #007aff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #0056cc; }
+    .danger { background: #ff3b30 !important; }
+    .danger:hover { background: #cc2a1e !important; }
+    .section { border: 1px solid #ddd; padding: 12px; margin-top: 12px; border-radius: 8px; }
+    .chasseur { background: #f5f5f7; padding: 8px; margin: 4px 0; border-radius: 4px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .row input { flex: 1; min-width: 60px; }
+    .stats { font-size: 14px; color: #666; }
+    .taux { font-weight: bold; color: #007aff; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: right; }
+    th { background: #f5f5f7; text-align: left; }
+    .petit { font-size: 12px; color: #999; }
+  </style>
+</head>
+<body>
+  <h1>Stats chasse – Par chasseur & battue</h1>
+
+  <div class="section">
+    <h2>Journée de chasse</h2>
+    <label>Date <input type="date" id="jour-date"></label>
+    <label>Lieu <input type="text" id="jour-lieu" placeholder="Ex: Sologne"></label>
+    <label>Nb battues prévues <input type="number" id="nb-battues" min="1" max="20" value="5"></label>
+    <button id="btn-nouvelle-journee">Créer / Charger journée</button>
+    <p class="petit" id="info-journee"></p>
+
+    <label>Journées enregistrées
+      <select id="select-journee"><option>Aucune</option></select>
+    </label>
+  </div>
+
+  <div class="section">
+    <h2>Chasseurs (clique + pour ajouter)</h2>
+    <div id="liste-chasseurs"></div>
+    <button id="btn-ajouter-chasseur">+ Ajouter chasseur</button>
+  </div>
+
+  <div class="section">
+    <h2>Battues (sélectionne pour saisir)</h2>
+    <label>Battue <select id="select-battue"></select></label>
+    <div id="saisie-battue"></div>
+    <button id="btn-sauvegarder-battue">Sauvegarder stats battue</button>
+  </div>
+
+  <div class="section">
+    <h2>Stats complètes</h2>
+    <div id="stats-globales"></div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = 'stats_chasse_v2'; // Nouvelle version pour migration
+
+    function chargerDonnees() {
+      let data = JSON.parse(localStorage.getItem(STORAGE_KEY)) || { journees: {} };
+      // Migration v1 -> v2
+      const old = localStorage.getItem('stats_chasse_v1');
+      if (old) {
+        try {
+          const oldData = JSON.parse(old);
+          Object.assign(data.journees, oldData.journees);
+          localStorage.removeItem('stats_chasse_v1');
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        } catch (e) {}
+      }
+      return data;
+    }
+
+    function sauvegarderDonnees(data) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+
+    function idJournee(date, lieu) { return date + '|' + (lieu || ''); }
+
+    const els = {
+      selectJournee: document.getElementById('select-journee'),
+      infoJournee: document.getElementById('info-journee'),
+      listeChasseurs: document.getElementById('liste-chasseurs'),
+      selectBattue: document.getElementById('select-battue'),
+      saisieBattue: document.getElementById('saisie-battue'),
+      statsGlobales: document.getElementById('stats-globales')
+    };
+
+    let data = chargerDonnees();
+    let journeeCouranteId = null;
+    let chasseurs = [];
+
+    function rafraichirSelectJournees() {
+      els.selectJournee.innerHTML = '<option>Aucune</option>';
+      Object.keys(data.journees).sort().forEach(id => {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = id.split('|') + (id.includes('|') ? ' – ' + id.split('|')[5] : '');
+        els.selectJournee.appendChild(opt);
+      });
+    }
+
+    function afficherJournee() {
+      if (!journeeCouranteId || !data.journees[journeeCouranteId]) {
+        els.infoJournee.textContent = 'Aucune journée.';
+        return;
+      }
+      const j = data.journees[journeeCouranteId];
+      els.infoJournee.innerHTML =
+        `Journée ${j.date} ${j.lieu ? '– ' + j.lieu : ''} | ${j.nbBattuesPrevu} battues prévues | ${j.chasseurs.length} chasseurs | ${j.battues.length} battues saisies`;
+      rafraichirChasseurs();
+      rafraichirBattues();
+      calculerStats();
+    }
+
+    function rafraichirChasseurs() {
+      if (!journeeCouranteId) return;
+      const j = data.journees[journeeCouranteId];
+      chasseurs = j.chasseurs;
+      els.listeChasseurs.innerHTML = '';
+      chasseurs.forEach((ch, i) => {
+        const div = document.createElement('div');
+        div.className = 'chasseur row';
+        div.innerHTML = `
+          <span>${ch.nom}</span>
+          <button class="danger petit" onclick="supprimerChasseur(${i})">Suppr</button>
+        `;
+        els.listeChasseurs.appendChild(div);
+      });
+    }
+
+    function ajouterChasseur(nom = '') {
+      if (!journeeCouranteId) return;
+      const j = data.journees[journeeCouranteId];
+      j.chasseurs.push({ nom: nom || `Chasseur ${j.chasseurs.length + 1}`, stats: {} });
+      sauvegarderDonnees(data);
+      rafraichirChasseurs();
+    }
+
+    window.supprimerChasseur = function(i) {
+      if (confirm('Supprimer ce chasseur ?')) {
+        const j = data.journees[journeeCouranteId];
+        j.chasseurs.splice(i, 1);
+        sauvegarderDonnees(data);
+        rafraichirChasseurs();
+      }
+    };
+
+    function rafraichirBattues() {
+      if (!journeeCouranteId) return;
+      const j = data.journees[journeeCouranteId];
+      els.selectBattue.innerHTML = '';
+      for (let i = 0; i < j.nbBattuesPrevu; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = `Battue ${i+1}`;
+        els.selectBattue.appendChild(opt);
+      }
+      els.selectBattue.value = Math.min(j.battues.length, j.nbBattuesPrevu - 1);
+      afficherSaisieBattue();
+    }
+
+    function afficherSaisieBattue() {
+      const battueIdx = parseInt(els.selectBattue.value);
+      if (!journeeCouranteId || isNaN(battueIdx)) return;
+      const j = data.journees[journeeCouranteId];
+      els.saisieBattue.innerHTML = '';
+      chasseurs.forEach((ch, i) => {
+        const stats = ch.stats[battueIdx] || { cartouches: 0, oiseaux: 0 };
+        const div = document.createElement('div');
+        div.className = 'row';
+        div.innerHTML = `
+          <span>${ch.nom}</span>
+          <input type="number" min="0" value="${stats.cartouches}" placeholder="Cartouches" onchange="updateStats(${i},${battueIdx},'cartouches',this.value)">
+          <input type="number" min="0" value="${stats.oiseaux}" placeholder="Oiseaux" onchange="updateStats(${i},${battueIdx},'oiseaux',this.value)">
+          <span class="taux">${(stats.cartouches > 0 ? ((stats.oiseaux/stats.cartouches)*100).toFixed(1) : 0)}%</span>
+        `;
+        els.saisieBattue.appendChild(div);
+      });
+    }
+
+    window.updateStats = function(chIdx, battueIdx, type, val) {
+      const j = data.journees[journeeCouranteId];
+      const ch = j.chasseurs[chIdx];
+      if (!ch.stats[battueIdx]) ch.stats[battueIdx] = {};
+      ch.stats[battueIdx][type] = parseInt(val) || 0;
+      // Auto-sauvegarde
+      j.battues[battueIdx] = true;
+      sauvegarderDonnees(data);
+      afficherSaisieBattue();
+      calculerStats();
+    };
+
+    function calculerStats() {
+      if (!journeeCouranteId) return;
+      const j = data.journees[journeeCouranteId];
+      let totalCart = 0, totalOis = 0, totalBattues = 0;
+      const statsChasseurs = chasseurs.map(ch => {
+        let cartCh = 0, oisCh = 0;
+        Object.values(ch.stats).forEach(b => {
+          cartCh += b.cartouches || 0;
+          oisCh += b.oiseaux || 0;
+        });
+        const tauxCh = cartCh > 0 ? ((oisCh/cartCh)*100).toFixed(1) : 0;
+        return { nom: ch.nom, cartouches: cartCh, oiseaux: oisCh, taux: tauxCh };
+      });
+      const statsBattues = [];
+      for (let i = 0; i < j.nbBattuesPrevu; i++) {
+        let cartB = 0, oisB = 0;
+        chasseurs.forEach(ch => {
+          const b = ch.stats[i];
+          cartB += b ? b.cartouches || 0 : 0;
+          oisB += b ? b.oiseaux || 0 : 0;
+        });
+        const tauxB = cartB > 0 ? ((oisB/cartB)*100).toFixed(1) : 0;
+        statsBattues.push({ num: i+1, cartouches: cartB, oiseaux: oisB, taux: tauxB });
+        totalCart += cartB;
+        totalOis += oisB;
+        if (cartB > 0) totalBattues++;
+      }
+      const tauxGlobal = totalCart > 0 ? ((totalOis/totalCart)*100).toFixed(1) : 0;
+      const moyCartBattue = totalBattues > 0 ? (totalCart / totalBattues).toFixed(1) : 0;
+
+      let html = `
+        <h3>Totaux généraux</h3>
+        <p>Cartouches total : ${totalCart} | Oiseaux total : ${totalOis} | Réussite : <span class="taux">${tauxGlobal}%</span></p>
+        <p>Moy. cartouches / battue : <span class="taux">${moyCartBattue}</span></p>
+
+        <h3>Par chasseur</h3>
+        <table>
+          <tr><th>Chasseur</th><th>Cartouches</th><th>Oiseaux</th><th>Réussite</th></tr>
+      `;
+      statsChasseurs.forEach(s => {
+        html += `<tr><td>${s.nom}</td><td>${s.cartouches}</td><td>${s.oiseaux}</td><td class="taux">${s.taux}%</td></tr>`;
+      });
+      html += '</table>';
+
+      html += `
+        <h3>Par battue</h3>
+        <table>
+          <tr><th>Battue</th><th>Cartouches</th><th>Oiseaux</th><th>Réussite</th></tr>
+      `;
+      statsBattues.forEach(s => {
+        html += `<tr><td>${s.num}</td><td>${s.cartouches}</td><td>${s.oiseaux}</td><td class="taux">${s.taux}%</td></tr>`;
+      });
+      html += '</table>';
+
+      els.statsGlobales.innerHTML = html;
+    }
+
+    // Événements
+    document.getElementById('btn-nouvelle-journee').onclick = () => {
+      const date = document.getElementById('jour-date').value;
+      const lieu = document.getElementById('jour-lieu').value.trim();
+      const nbBattues = parseInt(document.getElementById('nb-battues').value) || 5;
+      if (!date) return alert('Date requise');
+      const id = idJournee(date, lieu);
+      data.journees[id] = { date, lieu, nbBattuesPrevu: nbBattues, chasseurs: [], battues: [] };
+      journeeCouranteId = id;
+      sauvegarderDonnees(data);
+      rafraichirSelectJournees();
+      afficherJournee();
+    };
+
+    document.getElementById('btn-ajouter-chasseur').onclick = () => ajouterChasseur();
+
+    els.selectJournee.onchange = (e) => {
+      journeeCouranteId = e.target.value || null;
+      afficherJournee();
+    };
+
+    els.selectBattue.onchange = afficherSaisieBattue;
+
+    // Init
+    rafraichirSelectJournees();
+    const today = new Date().toISOString().split('T');
+    document.getElementById('jour-date').value = today;
+  </script>
+</body>
+</html>
